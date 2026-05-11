@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agentRuns     AgentRun[]
+  secrets       UserSecret[]
+  notifications NotificationRule[]
+
+  @@map("users")
+}
+
+model AgentTemplate {
+  id               String        @id @default(uuid())
+  slug             String        @unique
+  name             String
+  description      String?
+  image            String
+  defaultCommand   String
+  defaultArgs      String[]
+  workingDir       String?
+  requiredSecrets  String[]
+  optionalEnvSchema Json?
+  cpuLimit         Int?         @map("cpu_limit")
+  memoryLimit      Int?         @map("memory_limit")
+  diskSize         Int?         @map("disk_size")
+  exposedPorts     Int[]
+  enabled          Boolean       @default(true)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  agentRuns AgentRun[]
+
+  @@map("agent_templates")
+}
+
+model AgentRun {
+  id               String      @id @default(uuid())
+  userId           String      @map("user_id")
+  agentTemplateId  String      @map("agent_template_id")
+  boxId            String?     @map("box_id")
+  status           String      @default("created")
+  statusReason     String?     @map("status_reason")
+  command          String
+  args             String[]
+  workingDir       String?     @map("working_dir")
+  resourceLimits   Json?       @map("resource_limits")
+  secretBindings   String[]    @map("secret_bindings")
+  startedAt        DateTime?   @map("started_at")
+  stoppedAt        DateTime?   @map("stopped_at")
+  lastHeartbeatAt  DateTime?   @map("last_heartbeat_at")
+  lastOutputAt     DateTime?   @map("last_output_at")
+  exitCode         Int?        @map("exit_code")
+  ptySessionId     String?     @map("pty_session_id")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentTemplate AgentTemplate @relation(fields: [agentTemplateId], references: [id], onDelete: Cascade)
+  events       AgentRunEvent[]
+  logs         AgentRunLog[]
+
+  @@map("agent_runs")
+}
+
+model UserSecret {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  name            String
+  provider        String
+  encryptedValue  String   @map("encrypted_value")
+  encryptionKeyId String?  @map("encryption_key_id")
+  lastFour        String?  @map("last_four")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_secrets")
+}
+
+model AgentRunEvent {
+  id        String   @id @default(uuid())
+  runId     String   @map("run_id")
+  type      String
+  level     String   @default("info")
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("agent_run_events")
+}
+
+model AgentRunLog {
+  id        String   @id @default(uuid())
+  runId     String   @map("run_id")
+  stream    String
+  sequence  BigInt
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("agent_run_logs")
+}
+
+model NotificationRule {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  eventType       String   @map("event_type")
+  enabled         Boolean  @default(true)
+  channel         String   @default("email")
+  targetEmail     String   @map("target_email")
+  minIntervalSecs Int      @default(300) @map("min_interval_secs")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_rules")
+}
