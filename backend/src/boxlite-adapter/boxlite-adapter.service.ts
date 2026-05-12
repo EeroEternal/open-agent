@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IBoxliteAdapter } from './boxlite-adapter.interface';
 import { MockBoxliteAdapter } from './mock-boxlite-adapter';
+import { RealBoxliteAdapter } from './real-boxlite-adapter';
 
 /**
  * Boxlite Adapter Service
@@ -9,8 +10,9 @@ import { MockBoxliteAdapter } from './mock-boxlite-adapter';
  * Wraps the appropriate adapter implementation (mock or real)
  * based on configuration.
  *
+ * On macOS (with Boxlite SDK installed): set BOXLITE_ADAPTER_TYPE=real
  * On KVM host: set BOXLITE_ADAPTER_TYPE=real
- * locally: uses mock by default
+ * Locally (no sandbox support): uses mock by default
  */
 @Injectable()
 export class BoxliteAdapterService implements IBoxliteAdapter, OnModuleInit {
@@ -18,19 +20,19 @@ export class BoxliteAdapterService implements IBoxliteAdapter, OnModuleInit {
   private adapter: IBoxliteAdapter;
 
   constructor(private config: ConfigService) {
-    const adapterType = this.config.get('BOXLITE_ADAPTER_TYPE') || 'mock';
+    const adapterType = this.config.get<string>('BOXLITE_ADAPTER_TYPE') || 'mock';
 
     if (adapterType === 'real') {
-      // TODO: Import and use RealBoxliteAdapter on KVM host
-      this.logger.warn('Real BoxliteAdapter not yet implemented, falling back to mock');
-      this.adapter = new MockBoxliteAdapter();
+      this.adapter = new RealBoxliteAdapter();
+      this.logger.log('Using RealBoxliteAdapter (Boxlite SDK)');
     } else {
       this.adapter = new MockBoxliteAdapter();
+      this.logger.log('Using MockBoxliteAdapter (local dev)');
     }
   }
 
   onModuleInit() {
-    this.logger.log(`Using ${this.adapter.constructor.name} for Boxlite operations`);
+    this.logger.log(`Boxlite adapter initialized: ${this.adapter.constructor.name}`);
   }
 
   createBox(options: Parameters<IBoxliteAdapter['createBox']>[0]) {
