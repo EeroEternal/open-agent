@@ -5,12 +5,22 @@ import { useParams, useRouter } from "next/navigation";
 import TerminalComponent from "@/components/terminal";
 import { runsApi } from "@/lib/api";
 
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
 export default function AgentRunDetailPage() {
   const params = useParams();
   const router = useRouter();
   const runId = params.id as string;
   const [token, setToken] = useState<string | null>(null);
   const [run, setRun] = useState<any>(null);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,16 +37,18 @@ export default function AgentRunDetailPage() {
 
     async function load() {
       try {
-        const data = await runsApi.list(token);
-        const current = data.find((r: any) => r.id === runId);
-        if (!current) {
-          alert("Run not found");
-          router.push("/agent-runs");
-          return;
-        }
+        const [current, logsData, metricsData] = await Promise.all([
+          runsApi.get(token, runId),
+          runsApi.logs(token, runId),
+          runsApi.metrics(token, runId).catch(() => null),
+        ]);
         setRun(current);
+        setLogs(logsData);
+        setMetrics(metricsData);
       } catch (err: any) {
         console.error("Failed to load run:", err);
+        alert("Run not found");
+        router.push("/agent-runs");
       } finally {
         setLoading(false);
       }
@@ -49,8 +61,7 @@ export default function AgentRunDetailPage() {
     if (!token || !runId) return;
     try {
       await runsApi.stop(token, runId);
-      const data = await runsApi.list(token);
-      const current = data.find((r: any) => r.id === runId);
+      const current = await runsApi.get(token, runId);
       setRun(current);
     } catch (err: any) {
       alert(err.message || "Failed to stop run");
@@ -61,8 +72,7 @@ export default function AgentRunDetailPage() {
     if (!token || !runId) return;
     try {
       await runsApi.restart(token, runId);
-      const data = await runsApi.list(token);
-      const current = data.find((r: any) => r.id === runId);
+      const current = await runsApi.get(token, runId);
       setRun(current);
     } catch (err: any) {
       alert(err.message || "Failed to restart run");
@@ -141,6 +151,23 @@ export default function AgentRunDetailPage() {
           <div className="text-gray-400 text-sm">Box ID</div>
           <div className="text-sm font-mono mt-1">{run.boxId || "N/A"}</div>
         </div>
+
+        {metrics && (
+          <>
+            <div className="border border-gray-800 rounded-lg p-4">
+              <div className="text-gray-400 text-sm">CPU Usage</div>
+              <div className="text-lg font-medium mt-1">{metrics.cpuUsage?.toFixed?.(1) ?? metrics.cpuUsage}%</div>
+            </div>
+            <div className="border border-gray-800 rounded-lg p-4">
+              <div className="text-gray-400 text-sm">Memory</div>
+              <div className="text-lg font-medium mt-1">{formatBytes((metrics.memoryUsage || 0) * 1024 * 1024)}</div>
+            </div>
+            <div className="border border-gray-800 rounded-lg p-4">
+              <div className="text-gray-400 text-sm">Disk</div>
+              <div className="text-lg font-medium mt-1">{formatBytes((metrics.diskUsage || 0) * 1024 * 1024 * 1024)}</div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Terminal */}
@@ -148,6 +175,20 @@ export default function AgentRunDetailPage() {
         <h2 className="text-xl font-semibold mb-4">Terminal</h2>
         <TerminalComponent runId={runId} token={token} />
       </div>
+
+      {/* Logs */}
+      {logs.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">Logs</h2>
+          <div className="border border-gray-800 rounded-lg p-4 bg-black/30 max-h-96 overflow-y-auto font-mono text-sm">
+            {logs.map((log) => (
+              <div key={log.id} className="whitespace-pre-wrap break-all">
+                {log.content}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Events */}
       {run.events && run.events.length > 0 && (

@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { runsApi, templatesApi } from "@/lib/api";
+import { runsApi, templatesApi, secretsApi } from "@/lib/api";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [runs, setRuns] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
+  const [secrets, setSecrets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSecrets, setSelectedSecrets] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     const t = localStorage.getItem("token");
@@ -26,12 +28,14 @@ export default function DashboardPage() {
 
     async function load() {
       try {
-        const [runsData, templatesData] = await Promise.all([
+        const [runsData, templatesData, secretsData] = await Promise.all([
           runsApi.list(token),
           templatesApi.list(),
+          secretsApi.list(token),
         ]);
         setRuns(runsData);
         setTemplates(templatesData);
+        setSecrets(secretsData);
       } catch (err: any) {
         console.error("Failed to load:", err);
       } finally {
@@ -42,11 +46,24 @@ export default function DashboardPage() {
     load();
   }, [token]);
 
+  const toggleSecret = (templateId: string, secretId: string) => {
+    setSelectedSecrets((prev) => {
+      const current = prev[templateId] || [];
+      if (current.includes(secretId)) {
+        return { ...prev, [templateId]: current.filter((id) => id !== secretId) };
+      }
+      return { ...prev, [templateId]: [...current, secretId] };
+    });
+  };
+
   const handleCreateRun = async (templateId: string) => {
     if (!token) return;
 
     try {
-      await runsApi.create(token, { agentTemplateId: templateId });
+      await runsApi.create(token, {
+        agentTemplateId: templateId,
+        secretBindings: selectedSecrets[templateId] || [],
+      });
       const runsData = await runsApi.list(token);
       setRuns(runsData);
     } catch (err: any) {
@@ -121,13 +138,35 @@ export default function DashboardPage() {
             >
               <h3 className="text-lg font-medium mb-2">{t.name}</h3>
               <p className="text-gray-400 text-sm mb-3">{t.description}</p>
-              <div className="text-xs text-gray-500 mb-4">
+              <div className="text-xs text-gray-500 mb-4 space-y-1">
                 <div>Image: {t.image}</div>
                 <div>Command: {t.defaultCommand}</div>
                 {t.requiredSecrets?.length > 0 && (
                   <div>Requires: {t.requiredSecrets.join(", ")}</div>
                 )}
               </div>
+
+              {/* Secret Selection */}
+              {secrets.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-xs text-gray-400 mb-2">Inject Secrets:</div>
+                  <div className="space-y-1">
+                    {secrets.map((secret) => (
+                      <label key={secret.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-600 bg-gray-800"
+                          checked={(selectedSecrets[t.id] || []).includes(secret.id)}
+                          onChange={() => toggleSecret(t.id, secret.id)}
+                        />
+                        <span className="text-gray-300">{secret.name}</span>
+                        <span className="text-xs text-gray-500">({secret.provider})</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={() => handleCreateRun(t.id)}
                 className="w-full p-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"

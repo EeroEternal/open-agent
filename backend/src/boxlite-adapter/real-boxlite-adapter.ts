@@ -39,7 +39,7 @@ export class RealBoxliteAdapter implements IBoxliteAdapter {
       cpus: options.cpuLimit,
       diskSizeGb: options.diskSize,
       ports: options.ports?.map((p) => ({ guestPort: p })),
-    });
+    } as any);
 
     // Box is lazily created on first exec(), but we can trigger creation
     this.boxMap.set(boxId, box);
@@ -69,7 +69,7 @@ export class RealBoxliteAdapter implements IBoxliteAdapter {
       env: { ...((box as any)._boxOpts?.env || {}), ...(options?.env || {}) },
       workdir: (box as any)._boxOpts?.workdir || '/workspace',
       tty: true,
-    });
+    } as any);
 
     await interactiveBox.start();
     this.ptyMap.set(ptySessionId, interactiveBox);
@@ -181,7 +181,7 @@ export class RealBoxliteAdapter implements IBoxliteAdapter {
       return { cpuUsage: 0, memoryUsage: 0, diskUsage: 0 };
     }
     try {
-      const metrics = await box.metrics();
+      const metrics: any = await box.metrics();
       return {
         cpuUsage: metrics.cpuUsagePct || 0,
         memoryUsage: metrics.memoryUsageMib || 0,

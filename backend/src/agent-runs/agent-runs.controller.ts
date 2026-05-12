@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, UseGuards, Request, Query } from '@nestjs/common';
 import { AgentRunsService } from './agent-runs.service';
 import { CreateAgentRunDto } from './dto/create-agent-run.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,6 +21,22 @@ export class AgentRunsController {
   @Get(':id')
   findOne(@Param('id') id: string, @Request() req) {
     return this.runsService.findOne(id, req.user.id);
+  }
+
+  @Get(':id/logs')
+  getLogs(@Param('id') id: string, @Request() req, @Query('after') after?: string) {
+    const afterSeq = after ? BigInt(after) : undefined;
+    return this.runsService.getLogs(id, req.user.id, afterSeq);
+  }
+
+  @Get(':id/events')
+  getEvents(@Param('id') id: string, @Request() req) {
+    return this.runsService.getEvents(id, req.user.id);
+  }
+
+  @Get(':id/metrics')
+  getMetrics(@Param('id') id: string, @Request() req) {
+    return this.runsService.getMetrics(id, req.user.id);
   }
 
   @Put(':id/stop')

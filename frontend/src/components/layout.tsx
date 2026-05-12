@@ -1,18 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+
+const PUBLIC_PATHS = ["/", "/login", "/register"];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
+  const isPublic = PUBLIC_PATHS.includes(pathname);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     const userStr = localStorage.getItem("user");
 
-    if (!token) {
+    if (!token && !isPublic) {
       router.push("/login");
       return;
     }
@@ -20,7 +24,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (userStr) {
       setUser(JSON.parse(userStr));
     }
-  }, [router]);
+  }, [router, isPublic]);
 
   function handleLogout() {
     localStorage.removeItem("token");
@@ -28,6 +32,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     router.push("/login");
   }
 
+  // Public pages: render without auth nav
+  if (isPublic) {
+    return <div className="min-h-screen">{children}</div>;
+  }
+
+  // Authenticated pages: show loading until user is resolved
   if (!user) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }

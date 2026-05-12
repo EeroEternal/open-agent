@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -23,23 +23,23 @@ model User {
 }
 
 model AgentTemplate {
-  id               String        @id @default(uuid())
-  slug             String        @unique
+  id               String   @id @default(uuid())
+  slug             String   @unique
   name             String
   description      String?
   image            String
   defaultCommand   String
-  defaultArgs      String[]
+  defaultArgs      Json     @default("[]")
   workingDir       String?
-  requiredSecrets  String[]
+  requiredSecrets  Json     @default("[]")
   optionalEnvSchema Json?
-  cpuLimit         Int?         @map("cpu_limit")
-  memoryLimit      Int?         @map("memory_limit")
-  diskSize         Int?         @map("disk_size")
-  exposedPorts     Int[]
-  enabled          Boolean       @default(true)
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
+  cpuLimit         Int?     @map("cpu_limit")
+  memoryLimit      Int?     @map("memory_limit")
+  diskSize         Int?     @map("disk_size")
+  exposedPorts     Json     @default("[]")
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   agentRuns AgentRun[]
 
@@ -47,30 +47,30 @@ model AgentTemplate {
 }
 
 model AgentRun {
-  id               String      @id @default(uuid())
-  userId           String      @map("user_id")
-  agentTemplateId  String      @map("agent_template_id")
-  boxId            String?     @map("box_id")
-  status           String      @default("created")
-  statusReason     String?     @map("status_reason")
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  agentTemplateId  String    @map("agent_template_id")
+  boxId            String?   @map("box_id")
+  status           String    @default("created")
+  statusReason     String?   @map("status_reason")
   command          String
-  args             String[]
-  workingDir       String?     @map("working_dir")
-  resourceLimits   Json?       @map("resource_limits")
-  secretBindings   String[]    @map("secret_bindings")
-  startedAt        DateTime?   @map("started_at")
-  stoppedAt        DateTime?   @map("stopped_at")
-  lastHeartbeatAt  DateTime?   @map("last_heartbeat_at")
-  lastOutputAt     DateTime?   @map("last_output_at")
-  exitCode         Int?        @map("exit_code")
-  ptySessionId     String?     @map("pty_session_id")
-  createdAt        DateTime    @default(now()) @map("created_at")
-  updatedAt        DateTime    @updatedAt @map("updated_at")
+  args             Json      @default("[]")
+  workingDir       String?   @map("working_dir")
+  resourceLimits   Json?     @map("resource_limits")
+  secretBindings   Json      @default("[]")
+  startedAt        DateTime? @map("started_at")
+  stoppedAt        DateTime? @map("stopped_at")
+  lastHeartbeatAt  DateTime? @map("last_heartbeat_at")
+  lastOutputAt     DateTime? @map("last_output_at")
+  exitCode         Int?      @map("exit_code")
+  ptySessionId     String?   @map("pty_session_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   agentTemplate AgentTemplate @relation(fields: [agentTemplateId], references: [id], onDelete: Cascade)
-  events       AgentRunEvent[]
-  logs         AgentRunLog[]
+  events        AgentRunEvent[]
+  logs          AgentRunLog[]
 
   @@map("agent_runs")
 }
@@ -83,8 +83,8 @@ model UserSecret {
   encryptedValue  String   @map("encrypted_value")
   encryptionKeyId String?  @map("encryption_key_id")
   lastFour        String?  @map("last_four")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
   lastUsedAt      DateTime? @map("last_used_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -127,8 +127,8 @@ model NotificationRule {
   channel         String   @default("email")
   targetEmail     String   @map("target_email")
   minIntervalSecs Int      @default(300) @map("min_interval_secs")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

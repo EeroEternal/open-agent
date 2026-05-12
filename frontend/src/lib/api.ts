@@ -58,12 +58,20 @@ export const templatesApi = {
 // Agent Runs
 export const runsApi = {
   list: (token: string) => request<any[]>("/api/agent-runs", { token }),
-  create: (token: string, data: { agentTemplateId: string }) =>
+  get: (token: string, id: string) =>
+    request<any>(`/api/agent-runs/${id}`, { token }),
+  create: (token: string, data: { agentTemplateId: string; secretBindings?: string[] }) =>
     request<any>("/api/agent-runs", {
       method: "POST",
       token,
       body: JSON.stringify(data),
     }),
+  logs: (token: string, id: string, after?: string) =>
+    request<any[]>(`/api/agent-runs/${id}/logs${after ? `?after=${after}` : ""}`, { token }),
+  events: (token: string, id: string) =>
+    request<any[]>(`/api/agent-runs/${id}/events`, { token }),
+  metrics: (token: string, id: string) =>
+    request<any>(`/api/agent-runs/${id}/metrics`, { token }),
   stop: (token: string, id: string) =>
     request<any>(`/api/agent-runs/${id}/stop`, {
       method: "PUT",

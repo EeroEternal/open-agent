@@ -115,9 +115,36 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
       // Attach to PTY
       const pty = await this.boxliteAdapter.attachPty(run.boxId, run.ptySessionId);
 
+      // Initialize sequence counter for log persistence
+      let sequence = 1n;
+      try {
+        const lastLog = await this.prisma.agentRunLog.findFirst({
+          where: { runId },
+          orderBy: { sequence: 'desc' },
+        });
+        if (lastLog) {
+          sequence = lastLog.sequence + 1n;
+        }
+      } catch (seqErr) {
+        this.logger.warn(`Failed to query last log sequence for run ${runId}:`, seqErr);
+      }
+
       // Listen for PTY output
       pty.onData((data: string) => {
         client.emit('output', { data });
+
+        // Persist output to agent_run_logs
+        this.prisma.agentRunLog.create({
+          data: {
+            runId,
+            stream: 'stdout',
+            sequence,
+            content: data,
+          },
+        }).catch((err) => {
+          this.logger.error(`Failed to persist log for run ${runId}:`, err);
+        });
+        sequence = sequence + 1n;
       });
 
       // Listen for PTY exit

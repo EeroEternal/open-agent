@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BoxliteAdapterService } from '../boxlite-adapter/boxlite-adapter.service';
+import { SecretsService } from '../secrets/secrets.service';
 import { CreateAgentRunDto } from './dto/create-agent-run.dto';
 
 /**
@@ -42,6 +43,7 @@ export class AgentRunsService {
   constructor(
     private prisma: PrismaService,
     private boxliteAdapter: BoxliteAdapterService,
+    private secretsService: SecretsService,
   ) {}
 
   async create(userId: string, dto: CreateAgentRunDto) {
@@ -59,10 +61,10 @@ export class AgentRunsService {
         agentTemplateId: template.id,
         status: 'created',
         command: dto.command || template.defaultCommand,
-        args: dto.args || template.defaultArgs,
+        args: (dto.args || (template.defaultArgs as any)) as string[],
         workingDir: dto.workingDir || template.workingDir,
         resourceLimits: dto.resourceLimits || {},
-        secretBindings: dto.secretBindings || [],
+        secretBindings: (dto.secretBindings || []) as string[],
       },
     });
 
@@ -171,7 +173,7 @@ export class AgentRunsService {
         memoryLimit: run.agentTemplate.memoryLimit,
         diskSize: run.agentTemplate.diskSize,
         workingDir: run.workingDir,
-        ports: run.agentTemplate.exposedPorts,
+        ports: run.agentTemplate.exposedPorts as any as number[],
       });
 
       await this.prisma.agentRun.update({
@@ -182,11 +184,35 @@ export class AgentRunsService {
       await this.updateStatus(id, 'starting');
       await this.addEvent(id, 'starting', 'info', 'Starting agent process');
 
+      // Build runtime env with injected secrets
+      const env: Record<string, string> = {};
+      const secretBindings = run.secretBindings as any as string[];
+      if (secretBindings && secretBindings.length > 0) {
+        for (const secretId of secretBindings) {
+          try {
+            const secretInfo = await this.secretsService.findOne(secretId, run.userId);
+            const secretValue = await this.secretsService.decrypt(secretId, run.userId);
+
+            const providerKeyMap: Record<string, string> = {
+              openai: 'OPENAI_API_KEY',
+              anthropic: 'ANTHROPIC_API_KEY',
+              gemini: 'GEMINI_API_KEY',
+              github: 'GITHUB_TOKEN',
+            };
+
+            const envKey = providerKeyMap[secretInfo.provider] || secretInfo.name.toUpperCase().replace(/\s+/g, '_');
+            env[envKey] = secretValue;
+          } catch (err: any) {
+            this.addEvent(id, 'warning', 'warn', `Failed to inject secret ${secretId}: ${err.message}`);
+          }
+        }
+      }
+
       const { ptySessionId } = await this.boxliteAdapter.startPty(
         boxId,
         run.command,
-        run.args as string[],
-        { env: {}, cols: 80, rows: 24 },
+        (run.args as any) as string[],
+        { env, cols: 80, rows: 24 },
       );
 
       await this.prisma.agentRun.update({
@@ -249,6 +275,40 @@ export class AgentRunsService {
         ...(status === 'stopped' ? { stoppedAt: new Date() } : {}),
       },
     });
+  }
+
+  async getLogs(id: string, userId: string, after?: bigint) {
+    await this.getOwnedRun(id, userId);
+    const logs = await this.prisma.agentRunLog.findMany({
+      where: {
+        runId: id,
+        ...(after ? { sequence: { gt: after } } : {}),
+      },
+      orderBy: { sequence: 'asc' },
+      take: 2000,
+    });
+    // Serialize BigInt sequence to string for JSON compatibility
+    return logs.map((log) => ({
+      ...log,
+      sequence: log.sequence.toString(),
+    }));
+  }
+
+  async getEvents(id: string, userId: string) {
+    await this.getOwnedRun(id, userId);
+    return this.prisma.agentRunEvent.findMany({
+      where: { runId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
+  async getMetrics(id: string, userId: string) {
+    const run = await this.getOwnedRun(id, userId);
+    if (!run.boxId) {
+      return { cpuUsage: 0, memoryUsage: 0, diskUsage: 0 };
+    }
+    return this.boxliteAdapter.getMetrics(run.boxId);
   }
 
   private async addEvent(id: string, type: string, level: string, message: string) {

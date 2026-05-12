@@ -577,20 +577,18 @@ Reconciler 周期性执行：
 - Frontend：Next.js + React + xterm.js。
 - Backend API：Next.js API Route、NestJS 或 FastAPI 均可；如果团队偏 TypeScript，优先 NestJS。
 - Worker/Queue：Redis + BullMQ，MVP 简单；后续复杂工作流可迁移 Temporal。
-- Database：Postgres。
-- Secret Encryption：云 KMS 或自托管 master key + envelope encryption。
-- Email：Resend。
-- Logs：MVP 存 Postgres；日志量增长后迁移对象存储或 ClickHouse/Loki。
+- Database：**SQLite（MVP 轻量化）**；后续多租户/高并发时迁移 Postgres。
+- Secret Encryption：`cryptr` 单 key 加密（MVP）；生产环境替换为云 KMS 或 Vault。
+- Email：Resend（Phase 2 接入）。
+- Logs：MVP 存 SQLite；日志量增长后迁移对象存储或 ClickHouse/Loki。
 - Runtime：Boxlite REST API 或 SDK。
 
-如果目标是尽快验证产品，MVP 可以用单体服务加一个 worker 进程：
+如果目标是尽快验证产品，MVP 可以极简运行：
 
 ```text
 web: Next.js frontend + API
-worker: Agent Orchestrator + Notification worker
-postgres: metadata
-redis: queue/websocket pubsub
-boxlite: sandbox runtime
+sqlite: 本地文件数据库（零额外服务）
+boxlite: sandbox runtime（mock 模式可在无 KVM 环境开发）
 ```
 
 ## 14. MVP 分阶段计划
@@ -650,15 +648,97 @@ boxlite: sandbox runtime
 6. 日志量过大
    MVP 限制日志大小，后续将完整日志迁移到对象存储或日志系统，Postgres 只保留索引和最近片段。
 
-## 16. 下一步建议
+## 16. 实现状态跟踪（截至当前版本）
 
-优先验证一条最小技术链路：
+### 已完成
 
-1. 启动 `boxlite serve`。
-2. 创建一个 box。
-3. 在 box 中通过 PTY 或 `tmux` 启动一个简单 Agent 命令。
-4. 用后端 WebSocket 转发到 xterm.js。
-5. 断开浏览器后确认进程仍在运行。
-6. 重新打开页面后重新 attach 并看到连续输出。
+- **数据模型**：**SQLite + Prisma** schema 已落地，包含 User、AgentTemplate、AgentRun、UserSecret、AgentRunEvent、AgentRunLog、NotificationRule。无需 Docker 即可运行。
+- **认证体系**：JWT + bcrypt，含注册/登录/me 接口。
+- **Agent 模板管理**：基础 CRUD + 默认种子数据（OpenCode、Flue）。
+- **Agent Run 生命周期**：创建、启动、停止、重启、删除；状态机过渡校验已落地。
+- **Boxlite Adapter**：`IBoxliteAdapter` 接口 + `MockBoxliteAdapter`（本地开发）+ `RealBoxliteAdapter`（SDK）双实现。
+- **Web Terminal**：xterm.js + Socket.IO Gateway，支持 attach、input、resize、ping/pong。
+- **Secret 管理**：前端仅展示脱敏信息；后端使用 `cryptr` 加密持久化；运行时按 provider 映射为环境变量注入 sandbox（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 等）。
+- **日志与事件持久化**：`agent_run_events` 记录生命周期事件；`agent_run_logs` 按 sequence 存储 PTY 输出；WebSocket 在线时实时推送，离线后可增量拉取。
+- **Metrics 查询**：通过 Boxlite Adapter 暴露 CPU、内存、磁盘指标。
+- **前后端 API 闭环**：
+  - `GET /api/agent-runs/:id/logs?after=<sequence>`
+  - `GET /api/agent-runs/:id/events`
+  - `GET /api/agent-runs/:id/metrics`
+  - 前端 Detail 页已整合单 run 查询、日志回放、指标展示。
+- **创建 Run 时 Secret 绑定**：Dashboard 模板卡片支持勾选用户已有的 Secret，随创建请求一起提交。
 
-这条链路验证通过后，再补数据库、Secret、通知和多用户权限。否则过早设计复杂任务系统，可能会被 PTY attach、box 生命周期或持久盘语义卡住。
+### 待完成 / 已知缺口
+
+1. **Queue / Worker / Orchestrator**
+   - 当前 `AgentRunsService.startAgentRun` 直接在 Controller 中异步触发，没有队列。
+   - 没有独立的 Worker 进程，重启服务后会丢失正在执行的启动/停止任务。
+   - **建议**：后续引入 BullMQ + Redis（或 SQLite 队列/Better Queue 等轻量方案），将 `StartAgentRun`、`StopAgentRun` 投递到队列，由独立 Worker 消费。
+
+2. **Reconciler（状态对齐）**
+   - 缺少定时任务扫描 `starting` / `running` / `stopping` 状态的 Run，并与 Boxlite 实际状态对齐。
+   - 如果 Boxlite host 崩溃或进程异常退出，DB 状态不会自动更新为 `lost` / `failed`。
+   - **建议**：增加 `@nestjs/schedule` 定时 reconciler，或把 reconciler 逻辑放到 BullMQ 重复任务中。
+
+3. **Notification Service**
+   - 数据库有 `notification_rules` 表，但无 Service / Controller / 触发逻辑。
+   - 未接入 Resend。
+   - **建议**：新增 `notifications` 模块，监听 Agent Run 状态变化事件，按用户规则 debounce 后发送邮件。
+
+4. **Guard Service（值守与自动应答）**
+   - 设计文档第 6.4 节描述的自动应答、风险判断、邮件提醒均未实现。
+   - **建议**：MVP 阶段可暂不实现，但在 Terminal Gateway 中预留输出分析钩子（例如将输出流同时发送给 Guard Service 消费者）。
+
+5. **日志量过大时的降级策略**
+   - 当前所有 PTY 输出直接写入 Postgres，高并发或大输出量时可能拖垮 DB。
+   - **建议**：为 `agent_run_logs` 增加表分区或 TTL 策略；超阈值后转存对象存储（S3 / MinIO），Postgres 只保留最近 N 条索引。
+
+6. **Boxlite 集成待确认项**
+   - PTY attach/reconnect 语义仍依赖 Boxlite 实际能力；当前 `RealBoxliteAdapter` 使用 SDK 的 `InteractiveBox`，若原生不支持 attach，需要回退到 `tmux` 兼容方案。
+   - **建议**：在 `RealBoxliteAdapter` 中增加 `tmux`  fallback 逻辑（启动时 `tmux new-session -d`，attach 时 `tmux attach-session`）。
+
+7. **前端细节**
+   - Terminal 组件未实现断线重连后的历史输出回放（当前页面级别已展示静态 logs，但 xterm.js buffer 未预填充）。
+   - **建议**：Terminal 组件 mount 时，先调用 `runsApi.logs()` 将历史内容 `term.write()` 到 xterm.js，再建立 WebSocket 接收实时数据。
+
+8. **安全加固**
+   - `cryptr` 使用的是单一 master key，非 envelope encryption；生产环境建议替换为云 KMS 或 Vault。
+   - JWT secret 和 encryption secret 仍依赖 `.env` 默认值，启动时应强制校验。
+   - 日志 redaction（屏蔽 API Key）尚未实现。
+   - **建议**：增加 `LOG_REDACTION_PATTERNS` 中间件，在写入 `agent_run_logs` 前对常见 key/token 做正则脱敏。
+
+## 17. 下一步建议
+
+### 短期（1-2 周）
+
+1. **接入 BullMQ**：将 `startAgentRun`、`stopAgentRun` 改为队列任务，确保服务重启后任务不丢失。
+2. **补齐 Reconciler**：每 30 秒扫描一次运行中 Run，对比 Boxlite 实际状态，处理 `lost` / 自动标记 `completed`。
+3. **Terminal 历史回放**：前端 Terminal 组件加载时先拉取 `logs` 并写入 xterm.js buffer，解决刷新页面后丢失终端内容的问题。
+4. **环境变量强制校验**：backend 启动时检查 `JWT_SECRET`、`ENCRYPTION_SECRET` 是否已配置，拒绝使用默认值启动。
+
+### 中期（1 个月）
+
+1. **Notification Service + Resend**：实现邮件通知，覆盖运行完成、失败、长时间无输出。
+2. **日志脱敏与降级**：实现 redaction + 大日志转对象存储。
+3. **tmux 兼容层**：验证 Boxlite PTY attach 能力，若不足则用 tmux 兜底，保证用户断线重连后看到连续输出。
+4. **多租户权限精细化**：增加管理员/观察者角色；只读终端连接权限控制。
+
+### 长期（2-3 个月）
+
+1. **Guard Service**：基于规则 + LLM 的自动应答与风险判断。
+2. **Snapshot 与回滚**：Boxlite 持久盘快照，支持 Agent Run 状态保存与恢复。
+3. **多 Boxlite Host 调度**：支持负载均衡和故障转移。
+4. **Agent 模板市场**：动态加载、版本管理和社区模板分享。
+
+### 最小闭环验证清单
+
+在每次重大变更后，执行以下验证：
+
+1. 用户注册/登录。
+2. 创建 Secret（API Key）。
+3. Dashboard 选择模板 + 勾选 Secret，创建 Agent Run。
+4. 后端通过队列启动 Boxlite box，Secret 以环境变量注入。
+5. 打开运行详情页，Terminal 显示 Agent 输出；断开浏览器。
+6. 确认 Agent 进程仍在 sandbox 中运行（直接查询 Boxlite 或查看 DB 状态）。
+7. 重新打开详情页，拉取历史 logs，attach Terminal，继续实时查看输出。
+8. 停止 Run，确认 box 被清理，状态变为 `stopped`，邮件通知送达（如已开启）。
